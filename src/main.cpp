@@ -2,6 +2,15 @@
 #include "main.h"
 #include "pin.h"
 #include "stspin32g4.h"
+// #include <SimpleFOC.h>
+
+#ifdef SIMPLEFOC_H
+BLDCMotor motor = BLDCMotor(11);
+// BLDC driver instance
+BLDCDriver6PWM driver = BLDCDriver6PWM(INH1,INL1,INH2,INL2,INH3,INL3);
+// int phA_h,int phA_l,int phB_h,int phB_l,int phC_h,int phC_l, int en = NOT_SET
+float target_velocity = 10;
+#endif
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -37,25 +46,37 @@ void setup() {
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
-  MX_GPIO_Init();
+  pinMode(LED_WHITE, OUTPUT);
+  pinMode(LED_YELLOW, OUTPUT);
+  digitalWrite(LED_WHITE, HIGH);
+  digitalWrite(LED_YELLOW, LOW);
+
+  pinMode(WAKE, OUTPUT);
+  pinMode(READY, INPUT_PULLUP);
+  pinMode(NFAULT, INPUT_PULLUP);
+  digitalWrite(WAKE, HIGH); // STSPIN init should set this high but why not
   MX_I2C3_Init();
   MX_TIM1_Init();
-  MX_TIM2_Init();
-//   /* USER CODE BEGIN 2 */
-  // pinMode(INH1, OUTPUT);
-  // pinMode(INL1, OUTPUT);
-  // pinMode(INH2, OUTPUT);
-  // pinMode(INL2, OUTPUT);
-  // pinMode(INH3, OUTPUT);
-  // pinMode(INL3, OUTPUT);
+  //   /* USER CODE BEGIN 2 */
+  #ifdef SIMPLEFOC_H
+  // pwm frequency to be used [Hz]
+  // for atmega328 fixed to 32kHz
+  // esp32/stm32/teensy configurable
+  driver.pwm_frequency = 12000;
+  // power supply voltage [V]
+  driver.voltage_power_supply = 12;
+  // Max DC voltage allowed - default voltage_power_supply
+  driver.voltage_limit = 12;
+  // dead_zone [0,1] - default 0.02f - 2%
+  driver.dead_zone = 0.05f;
 
-  // analogWrite(INH1, 100);
-  // analogWrite(INL1, 100);
-  // analogWrite(INH2, 0);
-  // analogWrite(INL2, 0);
-  // analogWrite(INH3, 0);
-  // analogWrite(INL3, 0);
+  // driver init
+  driver.init();
 
+  // enable driver
+  driver.enable();
+  #else
+  
   // Maybe this needs to come after?
   if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1) != HAL_OK){Error_Handler();}
   if(HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1) != HAL_OK){Error_Handler();}
@@ -63,9 +84,9 @@ void setup() {
   if(HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2) != HAL_OK){Error_Handler();}
 //  if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3) != HAL_OK){Error_Handler();}
   if(HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3) != HAL_OK){Error_Handler();}
-  if(HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3) != HAL_OK){Error_Handler();}
+  #endif
 
-  HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_SET); // STSPIN32G4_init sets this high
+  // HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_SET); // STSPIN32G4_init sets this high
 
 
   //  /*************************************************/
@@ -105,18 +126,9 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  //	HAL_GPIO_TogglePin(LED_1_GPIO_Port, LED_1_Pin);
-	float brightness = 0;
-	if(HAL_GPIO_ReadPin(NFAULT_GPIO_Port, NFAULT_Pin) != GPIO_PIN_SET){
-		// error read fault register for issue
-		brightness+=0.4;
-	}
-	if(HAL_GPIO_ReadPin(READY_GPIO_Port, READY_Pin) != GPIO_PIN_SET){
-		// error
-	   brightness+=0.1;
-	}
-	// led_brightness(brightness);
+  digitalWrite(LED_WHITE, !digitalRead(READY));
+  digitalWrite(LED_YELLOW, !digitalRead(NFAULT));
+
 	uint8_t tmp = 0;
 	STSPIN32G4_readReg(&HdlSTSPING4, STSPIN32G4_I2C_STATUS, &tmp);
 	STSPIN32G4_statusRegTypeDef statusReg;
@@ -124,20 +136,6 @@ void loop() {
 
 	if(statusReg.vdsp){
 		Error_Handler(); // over voltage protection triggered
-	    // Purge registers to default values
-	    // if(STSPIN32G4_reset(&HdlSTSPING4) != STSPIN32G4_OK){Error_Handler();}
-
-	    // After reset a clearing of fault is needed to enable GHSx/GLSx outputs
-	    // if(STSPIN32G4_clearFaults(&HdlSTSPING4) != STSPIN32G4_OK){Error_Handler();}
-//		user_pwm_setvalue( 0, TIM_CHANNEL_1);
-	    // HAL_GPIO_WritePin(LED_1_GPIO_Port, LED_1_Pin, SET);
-		// reset = true;
-	}else{
-// 		if(reset){
-// //			user_pwm_setvalue(my_pulse, TIM_CHANNEL_1);
-// 			reset = false;
-// 		}
-		// HAL_GPIO_WritePin(LED_1_GPIO_Port, LED_1_Pin, RESET);
 	}
 	if(statusReg.thsd){
 		Error_Handler(); // Thermal shutdown
@@ -145,6 +143,10 @@ void loop() {
 	if(statusReg.vccUvlo){
 		Error_Handler(); // VCC UVLO (voltage to low)
 	}
+
+  #ifdef SIMPLEFOC_H
+  driver.setPwm(9,6,3);
+  #endif
 }
 
 /**
@@ -391,30 +393,30 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LED_1_GPIO_Port, LED_1_Pin, GPIO_PIN_RESET);
+  // /*Configure GPIO pin Output Level */
+  // HAL_GPIO_WritePin(LED_1_GPIO_Port, LED_1_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_RESET);
+  // /*Configure GPIO pin Output Level */
+  // HAL_GPIO_WritePin(WAKE_GPIO_Port, WAKE_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : LED_1_Pin */
-  GPIO_InitStruct.Pin = LED_1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LED_1_GPIO_Port, &GPIO_InitStruct);
+  // /*Configure GPIO pin : LED_1_Pin */
+  // GPIO_InitStruct.Pin = LED_1_Pin;
+  // GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  // GPIO_InitStruct.Pull = GPIO_NOPULL;
+  // GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  // HAL_GPIO_Init(LED_1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : WAKE_Pin */
-  GPIO_InitStruct.Pin = WAKE_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(WAKE_GPIO_Port, &GPIO_InitStruct);
+  // /*Configure GPIO pin : WAKE_Pin */
+  // GPIO_InitStruct.Pin = WAKE_Pin;
+  // GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  // GPIO_InitStruct.Pull = GPIO_NOPULL;
+  // GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  // HAL_GPIO_Init(WAKE_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : READY_Pin NFAULT_Pin */
-  GPIO_InitStruct.Pin = READY_Pin|NFAULT_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+  // /*Configure GPIO pins : READY_Pin NFAULT_Pin */
+  // GPIO_InitStruct.Pin = READY_Pin|NFAULT_Pin;
+  // GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  // GPIO_InitStruct.Pull = GPIO_PULLUP;
+  // HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
 }
