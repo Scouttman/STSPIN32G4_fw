@@ -2,12 +2,14 @@
 #include "main.h"
 #include "pin.h"
 #include "stspin32g4.h"
-// #include <SimpleFOC.h>
+#define _STM32_DEF_ // this shoudn't be needed
+#include <SimpleFOC.h>
 
 #ifdef SIMPLEFOC_H
 BLDCMotor motor = BLDCMotor(11);
 // BLDC driver instance
 BLDCDriver6PWM driver = BLDCDriver6PWM(INH1,INL1,INH2,INL2,INH3,INL3);
+// BLDCDriver6PWM driver = BLDCDriver6PWM(LED_YELLOW,INL1,INH2,INL2,INH3,INL3);
 // int phA_h,int phA_l,int phB_h,int phB_l,int phC_h,int phC_l, int en = NOT_SET
 float target_velocity = 10;
 #endif
@@ -48,15 +50,16 @@ void setup() {
   /* Initialize all configured peripherals */
   pinMode(LED_WHITE, OUTPUT);
   pinMode(LED_YELLOW, OUTPUT);
-  digitalWrite(LED_WHITE, HIGH);
+  // digitalWrite(LED_WHITE, HIGH);
+  analogWriteFrequency(12000);
+  analogWrite(LED_WHITE, LOW);
   digitalWrite(LED_YELLOW, LOW);
 
   pinMode(WAKE, OUTPUT);
   pinMode(READY, INPUT_PULLUP);
   pinMode(NFAULT, INPUT_PULLUP);
   digitalWrite(WAKE, HIGH); // STSPIN init should set this high but why not
-  MX_I2C3_Init();
-  MX_TIM1_Init();
+
   //   /* USER CODE BEGIN 2 */
   #ifdef SIMPLEFOC_H
   // pwm frequency to be used [Hz]
@@ -71,12 +74,15 @@ void setup() {
   driver.dead_zone = 0.05f;
 
   // driver init
-  driver.init();
+  if(!driver.init()){
+    // Error_Handler();
+  }
 
   // enable driver
   driver.enable();
   #else
   
+  MX_TIM1_Init();
   // Maybe this needs to come after?
   if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1) != HAL_OK){Error_Handler();}
   if(HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1) != HAL_OK){Error_Handler();}
@@ -86,9 +92,10 @@ void setup() {
   if(HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3) != HAL_OK){Error_Handler();}
   #endif
 
-   /*************************************************/
-   /*   STSPIN32G4 driver component initialization  */
-   /*************************************************/
+  /*************************************************/
+  /*   STSPIN32G4 driver component initialization  */
+  /*************************************************/
+  MX_I2C3_Init();
   STSPIN32G4_init( &HdlSTSPING4 );
   // Purge registers to default values
   if(STSPIN32G4_reset(&HdlSTSPING4) != STSPIN32G4_OK){
@@ -114,7 +121,10 @@ void loop() {
   digitalWrite(LED_WHITE, !digitalRead(READY));
   digitalWrite(LED_YELLOW, !digitalRead(NFAULT));
 
-	uint8_t tmp = 0;
+  #ifdef SIMPLEFOC_H
+  driver.setPwm(6,5,5);
+  #else
+  uint8_t tmp = 0;
 	STSPIN32G4_readReg(&HdlSTSPING4, STSPIN32G4_I2C_STATUS, &tmp);
 	STSPIN32G4_statusRegTypeDef statusReg;
 	if(STSPIN32G4_getStatus(&HdlSTSPING4, &statusReg) != STSPIN32G4_OK){Error_Handler();}
@@ -128,10 +138,8 @@ void loop() {
 	if(statusReg.vccUvlo){
 		Error_Handler(); // VCC UVLO (voltage to low)
 	}
-
-  #ifdef SIMPLEFOC_H
-  driver.setPwm(9,6,3);
   #endif
+  delay(100);
 }
 
 /**
