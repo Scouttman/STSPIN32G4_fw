@@ -1,5 +1,5 @@
 #define LED_WHITE PB_10 
-#define LED_YELLOW PC_13
+#define LED_RED PC_13
 
 // MCU to gate driver internal connection
 #define WAKE    PE7     //Push-pull output
